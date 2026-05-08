@@ -28,6 +28,7 @@ cd mp-pdf-bot
 - 把 wewe-rss 克隆到 `./wewe-rss/` 并构建（1-3 分钟）
 - 注册 launchd（开机自启 + 崩了重启）
 - 加 cron 每天 18:00 跑一次同步
+- 装 GUI（菜单栏图标 + Web UI on `localhost:4001`）
 
 完成后：
 ```bash
@@ -36,7 +37,24 @@ cd mp-pdf-bot
 - 在 dashboard 里：扫码登录微信读书（**不要勾"24 小时自动退出"**）
 - 公众号源 → 添加 → 粘贴公众号任意一篇文章的分享链接
 
-## 日常使用
+## 使用（朋友视角，零命令行）
+
+装好之后菜单栏会出现一个 **🟢 mp-pdf-bot** 图标。点击它有：
+
+- **Open Dashboard** — 打开 wewe-rss 后台，在这里加公众号、扫码登录微信读书
+- **Sync Now** — 立即拉一次新文章并转 PDF
+- **Open Web UI** — 打开 mp-pdf-bot 自己的 Web 页面（看状态、看 PDF 列表）
+- **Open PDFs Folder** — Finder 打开 PDF 归档目录
+- **Stop / Start wewe-rss** — 暂停 / 启动后台服务
+
+或者直接浏览器打开 **http://localhost:4001/** 看 Web UI（有状态条、Sync Now 按钮、按公众号分组的 PDF 列表）。
+
+图标颜色：
+- 🟢 服务正常
+- 🔴 服务挂了（重启 Mac 通常能自愈，或者菜单栏 → Stop / Start wewe-rss）
+- 🔵 正在同步
+
+## 日常使用（命令行）
 
 ```bash
 ./mybot sync         # 立即拉一次新文章并转 PDF
