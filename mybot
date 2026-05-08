@@ -3,6 +3,8 @@
 
 import argparse
 import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -10,6 +12,49 @@ REPO_ROOT = Path(__file__).resolve().parent
 LAUNCHD_LABEL = "com.mp-pdf-bot.wewe-rss"
 PLIST_PATH = Path.home() / "Library/LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 CRON_TAG = "# mp-pdf-bot"
+
+CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+]
+
+_INVALID_CHARS = re.compile(r'[/\\:*?"<>|\x00-\x1f]')
+
+
+def sanitize_filename(name: str, max_len: int = 80) -> str:
+    """Replace filesystem-invalid characters with `_`, trim to max_len."""
+    cleaned = _INVALID_CHARS.sub("_", name).strip()
+    return cleaned[:max_len]
+
+
+def find_chrome() -> str:
+    """Return the first existing Chrome-family binary path or exit with a clear message."""
+    for path in CHROME_CANDIDATES:
+        if Path(path).is_file():
+            return path
+    sys.exit(
+        "找不到 Chrome / Chromium / Edge。请装 Google Chrome:\n"
+        "  brew install --cask google-chrome"
+    )
+
+
+def load_config(path: Path) -> dict:
+    """Parse a simple KEY=value env file. Supports double-quoted values, '#' comments."""
+    out: dict = {}
+    if not path.is_file():
+        return out
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        # shlex.split handles quoted strings cleanly (`"a b"` → `a b`)
+        parts = shlex.split(value, posix=True)
+        out[key.strip()] = parts[0] if parts else ""
+    return out
 
 
 def cmd_setup(args):
