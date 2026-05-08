@@ -131,6 +131,79 @@ def _run_flask():
     app.run(host="127.0.0.1", port=GUI_PORT, threaded=True, use_reloader=False)
 
 
+import rumps
+
+# Map color → unicode character for the menu bar title (rumps doesn't easily
+# do colored dot icons; emoji works on macOS menu bar).
+_COLOR_DOT = {"green": "🟢", "red": "🔴", "blue": "🔵"}
+
+
+class MpPdfBotApp(rumps.App):
+    def __init__(self):
+        super().__init__("🔵 mp-pdf-bot", quit_button=None)
+        self.menu = [
+            "Open Dashboard",
+            "Sync Now",
+            "Open Web UI",
+            "Open PDFs Folder",
+            None,
+            "Stop wewe-rss",
+            "Start wewe-rss",
+            None,
+            "Quit GUI",
+        ]
+        self._refresh_timer = rumps.Timer(self._refresh, 5)
+        self._refresh_timer.start()
+
+    def _refresh(self, _sender):
+        snap = {
+            "launchd": gui_status.launchd_state(LAUNCHD_LABEL_WEWE),
+            "http": gui_status.http_health(WEWE_PORT),
+            "syncing": sync_state.snapshot()["state"] == "running",
+        }
+        color = gui_status.overall_color(snap)
+        self.title = f"{_COLOR_DOT[color]} mp-pdf-bot"
+
+    @rumps.clicked("Open Dashboard")
+    def open_dashboard(self, _):
+        subprocess.run(["open", f"http://localhost:{WEWE_PORT}/dash"])
+
+    @rumps.clicked("Sync Now")
+    def sync_now(self, _):
+        if sync_state.start() == "started":
+            threading.Thread(target=_sync_worker, daemon=True).start()
+            rumps.notification("mp-pdf-bot", "", "开始同步")
+
+    @rumps.clicked("Open Web UI")
+    def open_web_ui(self, _):
+        subprocess.run(["open", f"http://localhost:{GUI_PORT}/"])
+
+    @rumps.clicked("Open PDFs Folder")
+    def open_pdfs(self, _):
+        PDFS_DIR.mkdir(exist_ok=True)
+        subprocess.run(["open", str(PDFS_DIR)])
+
+    @rumps.clicked("Stop wewe-rss")
+    def stop_wewe(self, _):
+        subprocess.run(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL_WEWE}"],
+            capture_output=True,
+        )
+
+    @rumps.clicked("Start wewe-rss")
+    def start_wewe(self, _):
+        plist = Path.home() / "Library/LaunchAgents" / f"{LAUNCHD_LABEL_WEWE}.plist"
+        if plist.exists():
+            subprocess.run(
+                ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
+                capture_output=True,
+            )
+
+    @rumps.clicked("Quit GUI")
+    def quit_gui(self, _):
+        rumps.quit_application()
+
+
 if __name__ == "__main__":
-    # No menu bar yet (Task 9) — just run Flask in foreground for now
-    _run_flask()
+    threading.Thread(target=_run_flask, daemon=True).start()
+    MpPdfBotApp().run()
