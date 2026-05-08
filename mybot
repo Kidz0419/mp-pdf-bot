@@ -212,11 +212,14 @@ def _install_launchd(cfg: dict) -> None:
     # then refuses to bootstrap with cryptic "Input/output error 5". Strip it.
     subprocess.run(["xattr", "-c", str(PLIST_PATH)], capture_output=True)
 
-    # bootout if already loaded; ignore failure (not loaded → ok)
+    # bootout if already loaded; ignore failure (not loaded → ok). Sleep so
+    # launchd finishes async unload before bootstrap (avoids "I/O error 5").
     subprocess.run(
         ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
         capture_output=True,
     )
+    import time as _time
+    _time.sleep(2)
     _run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST_PATH)])
 
 
@@ -237,6 +240,56 @@ def _install_cron(cfg: dict) -> None:
     print(f"cron 已装：{cron_time}")
 
 
+LAUNCHD_GUI_LABEL = "com.mp-pdf-bot.gui"
+GUI_PLIST_PATH = Path.home() / "Library/LaunchAgents" / f"{LAUNCHD_GUI_LABEL}.plist"
+
+
+def _install_gui(cfg: dict) -> None:
+    venv = REPO_ROOT / ".venv"
+    if not venv.exists():
+        _run([sys.executable, "-m", "venv", str(venv)])
+
+    pip = venv / "bin" / "pip"
+    pip_env = {
+        **os.environ,
+        "PIP_INDEX_URL": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    }
+    # System Python's venv ships pip 21 — too old to find arm64 pyobjc wheels
+    # (rumps' transitive dep). Upgrade pip first so prebuilt wheels are used.
+    _run([str(pip), "install", "--upgrade", "pip"], env=pip_env)
+    _run([str(pip), "install", "-r", str(REPO_ROOT / "requirements-gui.txt")],
+         env=pip_env)
+
+    logs_dir = REPO_ROOT / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    template = (REPO_ROOT / "lib/gui_plist_template.xml").read_text()
+    venv_python = str(venv / "bin" / "python3")
+    server_script = str(REPO_ROOT / "gui" / "server.py")
+    path_env = "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+    plist = template.format(
+        label=LAUNCHD_GUI_LABEL,
+        python_path=venv_python,
+        server_script=server_script,
+        repo_root=str(REPO_ROOT),
+        path_env=path_env,
+        stdout_log=str(logs_dir / "gui.log"),
+        stderr_log=str(logs_dir / "gui.err.log"),
+    )
+    GUI_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GUI_PLIST_PATH.write_text(plist)
+    subprocess.run(["xattr", "-c", str(GUI_PLIST_PATH)], capture_output=True)
+
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_GUI_LABEL}"],
+        capture_output=True,
+    )
+    import time as _time
+    _time.sleep(2)
+    _run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(GUI_PLIST_PATH)])
+    print(f"GUI 已装：菜单栏图标 + http://localhost:{cfg.get('GUI_PORT', '4001')}/")
+
+
 def cmd_setup(args):
     print("== 1. 环境检查 ==")
     _preflight()
@@ -248,10 +301,13 @@ def cmd_setup(args):
     _install_launchd(cfg)
     print("== 5. 装 cron ==")
     _install_cron(cfg)
+    print("== 6. 安装 GUI ==")
+    _install_gui(cfg)
     print(
         f"\n✅ 装好了。下一步：\n"
-        f"  ./mybot open      # 浏览器扫码登录微信读书 + 添加公众号\n"
-        f"  ./mybot sync      # 立即拉一次（cron 每天 {cfg.get('CRON_TIME', '0 18 * * *')}）"
+        f"  浏览器：http://localhost:{cfg.get('GUI_PORT', '4001')}/\n"
+        f"  菜单栏：找顶部的 🟢 mp-pdf-bot 图标\n"
+        f"  加公众号：菜单栏 → Open Dashboard → 扫码登录微信读书 → 添加"
     )
 
 def _fetch_articles(db_path: Path):
