@@ -5,6 +5,9 @@ data/
 pdfs/
 logs/
 
+# GUI venv + installed deps
+.venv/
+
 # editor / OS
 .DS_Store
 .idea/
