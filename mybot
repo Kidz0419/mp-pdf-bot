@@ -208,6 +208,9 @@ def _install_launchd(cfg: dict) -> None:
     )
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(plist)
+    # macOS 26+ stamps com.apple.provenance on Python-created files; launchd
+    # then refuses to bootstrap with cryptic "Input/output error 5". Strip it.
+    subprocess.run(["xattr", "-c", str(PLIST_PATH)], capture_output=True)
 
     # bootout if already loaded; ignore failure (not loaded → ok)
     subprocess.run(
