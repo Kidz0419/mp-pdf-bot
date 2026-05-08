@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""mp-pdf-bot — archive 微信公众号 articles to PDF via wewe-rss + headless Chrome."""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+LAUNCHD_LABEL = "com.mp-pdf-bot.wewe-rss"
+PLIST_PATH = Path.home() / "Library/LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+CRON_TAG = "# mp-pdf-bot"
+
+
+def cmd_setup(args):
+    raise NotImplementedError("Task 4 implements setup")
+
+def cmd_sync(args):
+    raise NotImplementedError("Task 5 implements sync")
+
+def cmd_open(args):
+    raise NotImplementedError("Task 6 implements open")
+
+def cmd_logs(args):
+    raise NotImplementedError("Task 6 implements logs")
+
+def cmd_start(args):
+    raise NotImplementedError("Task 6 implements start")
+
+def cmd_stop(args):
+    raise NotImplementedError("Task 6 implements stop")
+
+def cmd_status(args):
+    raise NotImplementedError("Task 6 implements status")
+
+def cmd_uninstall(args):
+    raise NotImplementedError("Task 7 implements uninstall")
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="mybot", description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("setup", help="一次性安装")
+    sub.add_parser("sync", help="拉新文章 + 转 PDF")
+    sub.add_parser("open", help="浏览器打开 wewe-rss 后台")
+    sub.add_parser("logs", help="查看运行日志")
+    sub.add_parser("start", help="启动服务")
+    sub.add_parser("stop", help="停止服务")
+    sub.add_parser("status", help="显示运行状态")
+    sub.add_parser("uninstall", help="卸载服务和定时任务")
+    return p
+
+
+HANDLERS = {
+    "setup": cmd_setup,
+    "sync": cmd_sync,
+    "open": cmd_open,
+    "logs": cmd_logs,
+    "start": cmd_start,
+    "stop": cmd_stop,
+    "status": cmd_status,
+    "uninstall": cmd_uninstall,
+}
+
+
+def main():
+    args = build_parser().parse_args()
+    HANDLERS[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
