@@ -389,7 +389,42 @@ def cmd_status(args):
         print(f"\n== PDF ==\n  {pdfs_dir} ({count} 个)")
 
 def cmd_uninstall(args):
-    raise NotImplementedError("Task 7 implements uninstall")
+    print("== 移除 launchd ==")
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+        capture_output=True,
+    )
+    if PLIST_PATH.exists():
+        PLIST_PATH.unlink()
+        print(f"  删除 {PLIST_PATH}")
+
+    print("\n== 移除 cron ==")
+    existing = subprocess.run(
+        ["crontab", "-l"], capture_output=True, text=True
+    ).stdout
+    kept = [ln for ln in existing.splitlines() if CRON_TAG not in ln]
+    new_crontab = "\n".join(kept) + ("\n" if kept else "")
+    if new_crontab.strip():
+        subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
+    else:
+        subprocess.run(["crontab", "-r"], capture_output=True)
+    print("  crontab 中的 mp-pdf-bot 行已删除")
+
+    wewe = REPO_ROOT / "wewe-rss"
+    if wewe.exists():
+        shutil.rmtree(wewe)
+        print(f"\n  删除 {wewe}（源码 / build 产物）")
+
+    cfg = load_config(REPO_ROOT / "config.env")
+    data_dir = REPO_ROOT / cfg.get("DATA_DIR", "./data").lstrip("./")
+    pdfs = REPO_ROOT / cfg.get("PDF_OUTPUT_DIR", "./pdfs").lstrip("./")
+    print(
+        f"\n保留：\n"
+        f"  {data_dir}（SQLite 数据库）\n"
+        f"  {pdfs}（已生成的 PDF）\n"
+        f"  config.env\n"
+        f"想完全清理：rm -rf {data_dir} {pdfs} config.env"
+    )
 
 
 def build_parser():
