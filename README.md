@@ -65,11 +65,16 @@ CRON_TIME="0 18 * * *"           # 自动同步时间（标准 cron 表达式）
 
 改完重跑 `./mybot setup` 生效。
 
+## 国内访问
+
+`./mybot setup` 默认用 [npmmirror.com](https://registry.npmmirror.com) 拉 npm 包和 Prisma 二进制，无需 VPN 即可装好。`git clone` wewe-rss 仍直连 github.com — 国内大多数时段 OK，但偶尔抽风。
+
 ## 排错
 
-**`./mybot setup` 卡在 pnpm install**：网络问题。配 npm 镜像：
+**`./mybot setup` 卡在 git clone**：github.com 抽风。重跑 setup（已 clone 部分会复用），或临时给 git 配代理：
 ```bash
-pnpm config set registry https://registry.npmmirror.com
+export ALL_PROXY=socks5://127.0.0.1:7890   # 改成你的代理端口
+./mybot setup
 ```
 
 **`./mybot status` 显示 HTTP 502 / no response**：launchd 没起来。

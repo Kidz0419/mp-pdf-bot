@@ -90,8 +90,9 @@ def _preflight() -> None:
         sys.exit("没找到 git")
     if not _which("pnpm"):
         print("pnpm 未安装，启用 corepack…")
+        corepack_env = {**os.environ, "COREPACK_NPM_REGISTRY": "https://registry.npmmirror.com"}
         _run(["corepack", "enable"])
-        _run(["corepack", "prepare", "pnpm@latest", "--activate"])
+        _run(["corepack", "prepare", "pnpm@latest", "--activate"], env=corepack_env)
     find_chrome()  # exits if missing
 
 
@@ -166,17 +167,26 @@ def _install_wewe_rss(cfg: dict) -> None:
                 break
         ws_path.write_text(ws_text)
 
-    _run(["pnpm", "install"], cwd=target)
+    # Use npmmirror.com as registry for friends without VPN.
+    # Also redirect Prisma binary downloads (which otherwise hit binaries.prisma.sh).
+    npm_env = {
+        **os.environ,
+        "npm_config_registry": "https://registry.npmmirror.com",
+        "PRISMA_ENGINES_MIRROR": "https://registry.npmmirror.com/-/binary/prisma",
+        "PRISMA_BINARIES_MIRROR": "https://registry.npmmirror.com/-/binary/prisma",
+    }
+    print("(使用 npmmirror.com 镜像加速)")
+    _run(["pnpm", "install"], cwd=target, env=npm_env)
     # Use pnpm --filter server exec to run the project-local prisma (v5.x),
     # not a globally-downloaded one; schema path is relative to apps/server.
     # Pass DATABASE_URL explicitly so prisma doesn't look for .env in cwd.
-    prisma_env = {**os.environ, "DATABASE_URL": db_url}
+    prisma_env = {**npm_env, "DATABASE_URL": db_url}
     prisma_schema = "prisma/schema.prisma"
     _run(["pnpm", "--filter", "server", "exec", "prisma", "generate", f"--schema={prisma_schema}"],
          cwd=target, env=prisma_env)
     _run(["pnpm", "--filter", "server", "exec", "prisma", "migrate", "deploy", f"--schema={prisma_schema}"],
          cwd=target, env=prisma_env)
-    _run(["pnpm", "run", "-r", "build"], cwd=target)
+    _run(["pnpm", "run", "-r", "build"], cwd=target, env=npm_env)
 
 
 def _install_launchd(cfg: dict) -> None:
