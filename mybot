@@ -400,6 +400,89 @@ def cmd_open(args):
     subprocess.run(["open", url])
 
 
+def cmd_login(args):
+    """CLI bypass for the dashboard QR flow — open QR in browser, poll, add account."""
+    import json
+    import urllib.parse
+    import urllib.request
+
+    cfg = _config_or_exit()
+    port = cfg.get("WEWE_RSS_PORT", "4000")
+    auth = cfg.get("AUTH_CODE", "mp-pdf-bot")
+    base = f"http://localhost:{port}/trpc"
+    headers = {"Authorization": auth, "Content-Type": "application/json"}
+
+    # Bypass any HTTP_PROXY in env — localhost talk should be direct.
+    no_proxy_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def _post(path, payload):
+        req = urllib.request.Request(
+            f"{base}/{path}",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with no_proxy_opener.open(req, timeout=15) as r:
+            return json.loads(r.read())
+
+    def _get(path, payload):
+        params = urllib.parse.urlencode({"input": json.dumps(payload)})
+        req = urllib.request.Request(
+            f"{base}/{path}?{params}", headers={"Authorization": auth}
+        )
+        with no_proxy_opener.open(req, timeout=15) as r:
+            return json.loads(r.read())
+
+    print("→ 请求登录二维码…")
+    res = _post("platform.createLoginUrl", {})
+    data = res["result"]["data"]
+    uuid = data["uuid"]
+    scan_url = data["scanUrl"]
+
+    qr_html = REPO_ROOT / ".qr.html"
+    qr_img = (
+        f"https://api.qrserver.com/v1/create-qr-code/"
+        f"?data={urllib.parse.quote(scan_url)}&size=400x400"
+    )
+    qr_html.write_text(
+        "<html><body style='font-family:-apple-system;text-align:center;padding:40px'>"
+        "<h2>用 微信 扫码登录微信读书</h2>"
+        f"<img src='{qr_img}'/>"
+        "<p>扫描后在手机上点确认，本页面会自动关闭</p>"
+        f"<p style='color:#888;font-size:12px'>uuid: {uuid}</p>"
+        "</body></html>"
+    )
+    print(f"→ 浏览器打开 QR 页面：{qr_html}")
+    subprocess.run(["open", str(qr_html)])
+
+    print("→ 等待扫码 + 确认（最多 120 秒）…")
+    for i in range(60):
+        time.sleep(2)
+        try:
+            r = _get("platform.getLoginResult", {"id": uuid})
+        except Exception as e:
+            print(f"   ⚠ 查询出错：{e}")
+            continue
+        d = r.get("result", {}).get("data", {})
+        if d.get("vid") and d.get("token"):
+            print(f"\n→ 收到登录凭据，添加账号…")
+            _post("account.add", {
+                "id": str(d["vid"]),
+                "name": d.get("username", ""),
+                "token": d["token"],
+            })
+            print(f"✅ 添加成功：{d.get('username')} ({d['vid']})")
+            qr_html.unlink(missing_ok=True)
+            return
+        if d.get("message"):
+            print(f"   状态：{d['message']}")
+        else:
+            print(f"   ({(i+1)*2}s)…", end="\r", flush=True)
+
+    qr_html.unlink(missing_ok=True)
+    sys.exit("超时未完成扫码，请重试")
+
+
 def cmd_logs(args):
     log = REPO_ROOT / "logs/wewe-rss.log"
     err = REPO_ROOT / "logs/wewe-rss.err.log"
@@ -516,6 +599,7 @@ def build_parser():
     sub.add_parser("setup", help="一次性安装")
     sub.add_parser("sync", help="拉新文章 + 转 PDF")
     sub.add_parser("open", help="浏览器打开 wewe-rss 后台")
+    sub.add_parser("login", help="命令行扫码登录微信读书（绕过 dashboard）")
     sub.add_parser("logs", help="查看运行日志")
     sub.add_parser("start", help="启动服务")
     sub.add_parser("stop", help="停止服务")
@@ -528,6 +612,7 @@ HANDLERS = {
     "setup": cmd_setup,
     "sync": cmd_sync,
     "open": cmd_open,
+    "login": cmd_login,
     "logs": cmd_logs,
     "start": cmd_start,
     "stop": cmd_stop,
