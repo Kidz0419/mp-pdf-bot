@@ -7,8 +7,10 @@ import platform
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -239,8 +241,80 @@ def cmd_setup(args):
         f"  ./mybot sync      # 立即拉一次（cron 每天 {cfg.get('CRON_TIME', '0 18 * * *')}）"
     )
 
+def _fetch_articles(db_path: Path):
+    con = sqlite3.connect(db_path)
+    rows = con.execute("""
+        SELECT a.id, a.title, a.publish_time, f.mp_name
+          FROM articles a
+          JOIN feeds f ON a.mp_id = f.id
+         ORDER BY a.publish_time DESC
+    """).fetchall()
+    con.close()
+    return rows
+
+
+def _render_pdf(chrome: str, url: str, outfile: Path) -> bool:
+    cmd = [
+        chrome,
+        "--headless=new",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--hide-scrollbars",
+        "--virtual-time-budget=15000",
+        "--run-all-compositor-stages-before-draw",
+        "--no-pdf-header-footer",
+        f"--print-to-pdf={outfile}",
+        url,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=60)
+        return outfile.exists() and outfile.stat().st_size > 1024
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
 def cmd_sync(args):
-    raise NotImplementedError("Task 5 implements sync")
+    cfg = load_config(REPO_ROOT / "config.env")
+    if not cfg:
+        sys.exit("没找到 config.env，先跑 ./mybot setup")
+
+    data_dir = (REPO_ROOT / cfg.get("DATA_DIR", "./data").lstrip("./")).resolve()
+    db = data_dir / "wewe-rss.db"
+    if not db.exists():
+        sys.exit(f"DB 不存在：{db}\n等 wewe-rss 拉过文章再跑 sync")
+
+    out_root = (REPO_ROOT / cfg.get("PDF_OUTPUT_DIR", "./pdfs").lstrip("./")).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+    chrome = find_chrome()
+
+    rows = _fetch_articles(db)
+    if not rows:
+        print("没有可下载的文章。先到 ./mybot open 加公众号")
+        return
+
+    print(f"共 {len(rows)} 篇")
+    ok = skip = fail = 0
+    for i, (aid, title, ts, mp_name) in enumerate(rows, 1):
+        date = time.strftime("%Y%m%d", time.localtime(ts))
+        out_dir = out_root / sanitize_filename(mp_name)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        outfile = out_dir / f"{date}-{sanitize_filename(title)}.pdf"
+        url = f"https://mp.weixin.qq.com/s/{aid}"
+
+        if outfile.exists():
+            skip += 1
+            continue
+
+        print(f"[{i:>3}/{len(rows)}]  →   {outfile.name}", flush=True)
+        if _render_pdf(chrome, url, outfile):
+            ok += 1
+        else:
+            fail += 1
+            print(f"        ⚠ 失败：{url}")
+        time.sleep(0.5)
+
+    print(f"\n完成：成功 {ok} / 跳过 {skip} / 失败 {fail}")
+    print(f"输出：{out_root}")
 
 def cmd_open(args):
     raise NotImplementedError("Task 6 implements open")
