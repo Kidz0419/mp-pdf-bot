@@ -316,20 +316,77 @@ def cmd_sync(args):
     print(f"\n完成：成功 {ok} / 跳过 {skip} / 失败 {fail}")
     print(f"输出：{out_root}")
 
+def _config_or_exit() -> dict:
+    cfg = load_config(REPO_ROOT / "config.env")
+    if not cfg:
+        sys.exit("没找到 config.env，先跑 ./mybot setup")
+    return cfg
+
+
 def cmd_open(args):
-    raise NotImplementedError("Task 6 implements open")
+    cfg = _config_or_exit()
+    port = cfg.get("WEWE_RSS_PORT", "4000")
+    url = f"http://localhost:{port}/dash"
+    print(f"打开 {url}")
+    subprocess.run(["open", url])
+
 
 def cmd_logs(args):
-    raise NotImplementedError("Task 6 implements logs")
+    log = REPO_ROOT / "logs/wewe-rss.log"
+    err = REPO_ROOT / "logs/wewe-rss.err.log"
+    if not log.exists() and not err.exists():
+        sys.exit(f"日志还没生成：{log}")
+    # tail -f both, simplest UX
+    subprocess.run(["tail", "-f", str(log), str(err)])
+
 
 def cmd_start(args):
-    raise NotImplementedError("Task 6 implements start")
+    if not PLIST_PATH.exists():
+        sys.exit("没找到 launchd plist。先跑 ./mybot setup")
+    _run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST_PATH)])
+
 
 def cmd_stop(args):
-    raise NotImplementedError("Task 6 implements stop")
+    if not PLIST_PATH.exists():
+        sys.exit("没找到 launchd plist")
+    _run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+        check=False,
+    )
+
 
 def cmd_status(args):
-    raise NotImplementedError("Task 6 implements status")
+    cfg = _config_or_exit()
+    port = cfg.get("WEWE_RSS_PORT", "4000")
+
+    print("== launchd ==")
+    r = subprocess.run(
+        ["launchctl", "print", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        for ln in r.stdout.splitlines():
+            if any(k in ln for k in ("state =", "pid =", "last exit code")):
+                print(" ", ln.strip())
+    else:
+        print("  launchd 未注册")
+
+    print("\n== HTTP ==")
+    r = subprocess.run(
+        ["curl", "--noproxy", "*", "-s", "-o", "/dev/null",
+         "-w", "%{http_code}", f"http://localhost:{port}"],
+        capture_output=True, text=True,
+    )
+    print(f"  http://localhost:{port} → {r.stdout.strip() or 'no response'}")
+
+    db = (REPO_ROOT / cfg.get("DATA_DIR", "./data").lstrip("./") / "wewe-rss.db")
+    if db.exists():
+        print(f"\n== DB ==\n  {db} ({db.stat().st_size // 1024} KB)")
+
+    pdfs_dir = (REPO_ROOT / cfg.get("PDF_OUTPUT_DIR", "./pdfs").lstrip("./"))
+    if pdfs_dir.exists():
+        count = sum(1 for _ in pdfs_dir.rglob("*.pdf"))
+        print(f"\n== PDF ==\n  {pdfs_dir} ({count} 个)")
 
 def cmd_uninstall(args):
     raise NotImplementedError("Task 7 implements uninstall")
