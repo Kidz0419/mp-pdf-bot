@@ -64,6 +64,39 @@ def api_status():
     })
 
 
+def _sync_worker():
+    """Run ./mybot sync in subprocess; parse summary line; update sync_state."""
+    log = REPO_ROOT / "logs" / "sync-gui.log"
+    log.parent.mkdir(exist_ok=True)
+    with log.open("a") as f:
+        proc = subprocess.run(
+            [str(REPO_ROOT / "mybot"), "sync"],
+            cwd=REPO_ROOT, stdout=f, stderr=subprocess.STDOUT, text=True,
+        )
+    # Parse last "完成：成功 N / 跳过 M / 失败 K" from log to extract counts
+    ok = fail = skip = 0
+    if log.exists():
+        for ln in reversed(log.read_text().splitlines()[-20:]):
+            m = re.search(r"成功\s+(\d+)\s*/\s*跳过\s+(\d+)\s*/\s*失败\s+(\d+)", ln)
+            if m:
+                ok, skip, fail = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                break
+    sync_state.finish({"ok": ok, "skip": skip, "fail": fail, "exit_code": proc.returncode})
+
+
+@app.route("/api/sync", methods=["POST"])
+def api_sync():
+    result = sync_state.start()
+    if result == "started":
+        threading.Thread(target=_sync_worker, daemon=True).start()
+    return jsonify({"state": result})
+
+
+@app.route("/api/sync/status")
+def api_sync_status():
+    return jsonify(sync_state.snapshot())
+
+
 def _run_flask():
     app.run(host="127.0.0.1", port=GUI_PORT, threaded=True, use_reloader=False)
 
