@@ -3,8 +3,11 @@
 
 import argparse
 import os
+import platform
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -57,8 +60,184 @@ def load_config(path: Path) -> dict:
     return out
 
 
+def _run(cmd, *, cwd=None, env=None, check=True, capture=False):
+    """Run a shell command list, stream or capture output."""
+    print(f"$ {' '.join(map(str, cmd))}")
+    if capture:
+        return subprocess.run(cmd, cwd=cwd, env=env, check=check, text=True, capture_output=True)
+    return subprocess.run(cmd, cwd=cwd, env=env, check=check)
+
+
+def _which(prog: str):
+    """Return path to `prog` or None — typed loosely for Python 3.9 compat."""
+    return shutil.which(prog)
+
+
+def _preflight() -> None:
+    if platform.system() != "Darwin":
+        sys.exit("仅支持 macOS")
+    if not _which("brew"):
+        sys.exit("没找到 Homebrew。装一下：https://brew.sh")
+    if not _which("node"):
+        sys.exit("没找到 Node.js。先装：brew install node")
+    out = _run(["node", "--version"], capture=True).stdout.strip()
+    major = int(out.lstrip("v").split(".")[0])
+    if major < 20:
+        sys.exit(f"Node 版本太旧 ({out})，需要 20+。升级：brew upgrade node")
+    if not _which("git"):
+        sys.exit("没找到 git")
+    if not _which("pnpm"):
+        print("pnpm 未安装，启用 corepack…")
+        _run(["corepack", "enable"])
+        _run(["corepack", "prepare", "pnpm@latest", "--activate"])
+    find_chrome()  # exits if missing
+
+
+def _ensure_config_env() -> dict:
+    src = REPO_ROOT / "config.example.env"
+    dst = REPO_ROOT / "config.env"
+    if not dst.exists():
+        shutil.copy(src, dst)
+        print(f"已生成 config.env（默认值）：{dst}")
+    return load_config(dst)
+
+
+def _install_wewe_rss(cfg: dict) -> None:
+    target = REPO_ROOT / "wewe-rss"
+    ref = cfg.get("WEWE_RSS_REPO_REF", "v2.6.1")
+    if not target.exists():
+        _run(["git", "clone", "https://github.com/cooderl/wewe-rss.git", str(target)])
+    _run(["git", "fetch", "--tags"], cwd=target)
+    _run(["git", "checkout", ref], cwd=target)
+
+    # Switch Prisma schema from MySQL → SQLite
+    mysql_dir = target / "apps/server/prisma"
+    sqlite_dir = target / "apps/server/prisma-sqlite"
+    if sqlite_dir.exists():
+        if mysql_dir.exists():
+            shutil.rmtree(mysql_dir)
+        shutil.move(str(sqlite_dir), str(mysql_dir))
+
+    data_dir = REPO_ROOT / cfg.get("DATA_DIR", "./data").lstrip("./")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    env_path = target / ".env"
+    port = cfg.get("WEWE_RSS_PORT", "4000")
+    auth = cfg.get("AUTH_CODE", "mp-pdf-bot")
+    db_url = f"file:{data_dir.resolve()}/wewe-rss.db"
+    env_content = (
+        f"DATABASE_URL={db_url}\n"
+        f"DATABASE_TYPE=sqlite\n"
+        f"AUTH_CODE={auth}\n"
+        f"FEED_MODE=fulltext\n"
+        f"SERVER_ORIGIN_URL=http://localhost:{port}\n"
+    )
+    env_path.write_text(env_content)
+    # The NestJS server runs with CWD=apps/server and loads .env from there
+    (target / "apps/server/.env").write_text(env_content)
+
+    # pnpm 11+ requires explicit approval for build scripts.
+    # It writes allowBuilds entries to pnpm-workspace.yaml; set them all to true.
+    _BUILD_PKGS = [
+        "@nestjs/core",
+        "@prisma/client",
+        "@prisma/engines",
+        "esbuild",
+        "prisma",
+        "sharp",
+    ]
+    ws_path = target / "pnpm-workspace.yaml"
+    if ws_path.exists():
+        ws_text = ws_path.read_text()
+        # Replace placeholder value with true for each build pkg
+        ws_text = ws_text.replace("set this to true or false", "true")
+        # Ensure allowBuilds section exists for each required package
+        for pkg in _BUILD_PKGS:
+            if pkg not in ws_text:
+                # Append to allowBuilds section if missing
+                if "allowBuilds:" in ws_text:
+                    ws_text = ws_text.rstrip() + f"\n  '{pkg}': true\n"
+                else:
+                    ws_text = ws_text.rstrip() + "\nallowBuilds:\n"
+                    for p in _BUILD_PKGS:
+                        ws_text += f"  '{p}': true\n"
+                break
+        ws_path.write_text(ws_text)
+
+    _run(["pnpm", "install"], cwd=target)
+    # Use pnpm --filter server exec to run the project-local prisma (v5.x),
+    # not a globally-downloaded one; schema path is relative to apps/server.
+    # Pass DATABASE_URL explicitly so prisma doesn't look for .env in cwd.
+    prisma_env = {**os.environ, "DATABASE_URL": db_url}
+    prisma_schema = "prisma/schema.prisma"
+    _run(["pnpm", "--filter", "server", "exec", "prisma", "generate", f"--schema={prisma_schema}"],
+         cwd=target, env=prisma_env)
+    _run(["pnpm", "--filter", "server", "exec", "prisma", "migrate", "deploy", f"--schema={prisma_schema}"],
+         cwd=target, env=prisma_env)
+    _run(["pnpm", "run", "-r", "build"], cwd=target)
+
+
+def _install_launchd(cfg: dict) -> None:
+    logs_dir = REPO_ROOT / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    template = (REPO_ROOT / "lib/plist_template.xml").read_text()
+
+    pnpm_path = _which("pnpm") or sys.exit("pnpm 找不到（应该不该到这一步）")
+    node_dir = str(Path(_which("node")).parent)
+    path_env = f"{node_dir}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"
+
+    plist = template.format(
+        label=LAUNCHD_LABEL,
+        pnpm_path=pnpm_path,
+        wewe_rss_dir=str(REPO_ROOT / "wewe-rss"),
+        path_env=path_env,
+        stdout_log=str(logs_dir / "wewe-rss.log"),
+        stderr_log=str(logs_dir / "wewe-rss.err.log"),
+    )
+    PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PLIST_PATH.write_text(plist)
+
+    # bootout if already loaded; ignore failure (not loaded → ok)
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCHD_LABEL}"],
+        capture_output=True,
+    )
+    _run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST_PATH)])
+
+
+def _install_cron(cfg: dict) -> None:
+    cron_time = cfg.get("CRON_TIME", "0 18 * * *")
+    sync_log = REPO_ROOT / "logs/sync.log"
+    new_line = (
+        f'{cron_time} cd {REPO_ROOT} && ./mybot sync >> {sync_log} 2>&1 {CRON_TAG}'
+    )
+
+    existing = subprocess.run(
+        ["crontab", "-l"], capture_output=True, text=True
+    ).stdout
+    kept = [ln for ln in existing.splitlines() if CRON_TAG not in ln]
+    kept.append(new_line)
+    new_crontab = "\n".join(kept) + "\n"
+    subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
+    print(f"cron 已装：{cron_time}")
+
+
 def cmd_setup(args):
-    raise NotImplementedError("Task 4 implements setup")
+    print("== 1. 环境检查 ==")
+    _preflight()
+    print("== 2. 配置 ==")
+    cfg = _ensure_config_env()
+    print("== 3. 安装 wewe-rss ==")
+    _install_wewe_rss(cfg)
+    print("== 4. 注册 launchd ==")
+    _install_launchd(cfg)
+    print("== 5. 装 cron ==")
+    _install_cron(cfg)
+    print(
+        f"\n✅ 装好了。下一步：\n"
+        f"  ./mybot open      # 浏览器扫码登录微信读书 + 添加公众号\n"
+        f"  ./mybot sync      # 立即拉一次（cron 每天 {cfg.get('CRON_TIME', '0 18 * * *')}）"
+    )
 
 def cmd_sync(args):
     raise NotImplementedError("Task 5 implements sync")
