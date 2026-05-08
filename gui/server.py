@@ -97,6 +97,36 @@ def api_sync_status():
     return jsonify(sync_state.snapshot())
 
 
+@app.route("/api/feeds")
+def api_feeds():
+    """List public account dirs under PDFS_DIR with their PDF files."""
+    out = []
+    if PDFS_DIR.is_dir():
+        for d in sorted(PDFS_DIR.iterdir()):
+            if not d.is_dir():
+                continue
+            pdfs = sorted(
+                [{"name": p.name, "size_kb": p.stat().st_size // 1024}
+                 for p in d.glob("*.pdf")],
+                key=lambda x: x["name"], reverse=True,
+            )
+            out.append({"mp_name": d.name, "count": len(pdfs), "pdfs": pdfs})
+    return jsonify(out)
+
+
+@app.route("/pdfs/<path:relpath>")
+def serve_pdf(relpath):
+    """Serve a PDF file inline. Path is constrained to PDFS_DIR."""
+    target = (PDFS_DIR / relpath).resolve()
+    # Prevent path traversal
+    if not str(target).startswith(str(PDFS_DIR.resolve())):
+        abort(403)
+    if not target.is_file() or target.suffix != ".pdf":
+        abort(404)
+    return send_file(str(target), mimetype="application/pdf",
+                     as_attachment=False, download_name=target.name)
+
+
 def _run_flask():
     app.run(host="127.0.0.1", port=GUI_PORT, threaded=True, use_reloader=False)
 
