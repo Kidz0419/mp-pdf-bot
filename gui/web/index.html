@@ -2,10 +2,35 @@
 <html lang="zh">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mp-pdf-bot</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>mp-pdf-bot</h1>
-  <p>Web UI loading…</p>
+  <header>
+    <h1>mp-pdf-bot</h1>
+    <span id="header-time"></span>
+  </header>
+
+  <section class="status">
+    <span id="status-dot" class="dot dot-red"></span>
+    <span id="status-text">检查中…</span>
+    <span class="sep">·</span>
+    <span id="db-size">DB —</span>
+    <span class="sep">·</span>
+    <span id="pdf-count">PDF —</span>
+  </section>
+
+  <section class="actions">
+    <button id="sync-btn">Sync Now</button>
+    <a class="btn-link" href="http://localhost:4000/dash" target="_blank">Open Dashboard</a>
+  </section>
+
+  <section id="feeds">
+    <h2>PDF 归档</h2>
+    <div id="feeds-list">加载中…</div>
+  </section>
+
+  <script src="app.js"></script>
 </body>
 </html>
